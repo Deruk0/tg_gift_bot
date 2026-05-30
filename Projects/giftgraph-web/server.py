@@ -4,6 +4,7 @@ GiftGraph Web — сервис для постоянного хостинга и
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -17,16 +18,38 @@ API_SECRET = os.getenv("GIFTGRAPH_SECRET", "").strip()
 
 os.makedirs(GRAPHS_DIR, exist_ok=True)
 
+# ── Helpers ───────────────────────────────────────────────────────────────
+
+def _strip_html(s: str) -> str:
+    """Strip HTML tags and decode common HTML entities."""
+    s = re.sub(r"<[^>]+>", "", s)
+    s = s.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'")
+    return s.strip()
+
 # ── Индекс ────────────────────────────────────────────────────────────────
 
 def _load_index() -> dict:
     if os.path.exists(INDEX_PATH):
         try:
             with open(INDEX_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
+                idx = json.load(f)
         except (json.JSONDecodeError, IOError):
-            pass
-    return {"graphs": {}}
+            idx = {"graphs": {}}
+    else:
+        idx = {"graphs": {}}
+
+    # Migration: strip HTML tags from legacy labels
+    dirty = False
+    for gid, info in idx.get("graphs", {}).items():
+        raw = info.get("label", "")
+        clean = _strip_html(raw)
+        if clean != raw:
+            info["label"] = clean
+            dirty = True
+    if dirty:
+        _save_index(idx)
+
+    return idx
 
 def _save_index(idx: dict) -> None:
     with open(INDEX_PATH, "w", encoding="utf-8") as f:
@@ -368,10 +391,11 @@ def api_create_graph():
         f.write(html)
 
     now = datetime.now(timezone.utc)
-    label = data.get("label", f"Граф {gid[:6]}")
-    nodes = data.get("nodes", 0)
-    edges = data.get("edges", 0)
-    path_length = data.get("path_length", 0)
+    raw_label = data.get("label", f"Граф {gid[:6]}")
+    label = _strip_html(str(raw_label))
+    nodes = int(data.get("nodes", 0))
+    edges = int(data.get("edges", 0))
+    path_length = int(data.get("path_length", 0))
 
     idx = _load_index()
     idx.setdefault("graphs", {})[gid] = {
@@ -385,6 +409,13 @@ def api_create_graph():
     _save_index(idx)
 
     return jsonify({"id": gid, "url": f"/view/{gid}", "raw_url": f"/graph/{gid}"}), 201
+
+
+@app.route("/api/graphs", methods=["GET"])
+def api_list_graphs():
+    idx = _load_index()
+    graphs = idx.get("graphs", {})
+    return jsonify({"graphs": graphs, "count": len(graphs)})
 
 
 @app.route("/api/graphs/<gid>", methods=["DELETE"])

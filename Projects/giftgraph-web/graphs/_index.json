@@ -1,7 +1,7 @@
 {
   "graphs": {
     "d9f1792a56e0": {
-      "label": "Граф <b>@Illiyuzi</b>",
+      "label": "Граф @Illiyuzi",
       "nodes": 500,
       "edges": 1088,
       "path_length": 0,
@@ -9,12 +9,28 @@
       "created_ts": 1780149378.617119
     },
     "907a108e1153": {
-      "label": "Граф <b>@Illiyuzi</b>",
+      "label": "Граф @Illiyuzi",
       "nodes": 500,
       "edges": 1145,
       "path_length": 0,
       "created": "2026-05-30 13:58 UTC",
       "created_ts": 1780149497.948909
+    },
+    "62cb463595be": {
+      "label": "Граф @Illiyuzi",
+      "nodes": 6,
+      "edges": 31,
+      "path_length": 0,
+      "created": "2026-05-30 15:47 UTC",
+      "created_ts": 1780156028.177277
+    },
+    "224e6b650753": {
+      "label": "Граф @Illiyuzi",
+      "nodes": 500,
+      "edges": 1145,
+      "path_length": 0,
+      "created": "2026-05-30 15:48 UTC",
+      "created_ts": 1780156130.046274
     }
   }
 }
