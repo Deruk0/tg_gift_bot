@@ -1,0 +1,20 @@
+{
+  "graphs": {
+    "d9f1792a56e0": {
+      "label": "Граф <b>@Illiyuzi</b>",
+      "nodes": 500,
+      "edges": 1088,
+      "path_length": 0,
+      "created": "2026-05-30 13:56 UTC",
+      "created_ts": 1780149378.617119
+    },
+    "907a108e1153": {
+      "label": "Граф <b>@Illiyuzi</b>",
+      "nodes": 500,
+      "edges": 1145,
+      "path_length": 0,
+      "created": "2026-05-30 13:58 UTC",
+      "created_ts": 1780149497.948909
+    }
+  }
+}
