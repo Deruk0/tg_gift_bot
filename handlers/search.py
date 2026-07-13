@@ -17,7 +17,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from telethon import TelegramClient
 
-from config import GIFTGRAPH_WEB_URL, GIFTGRAPH_WEB_SECRET
+from config import GIFTGRAPH_WEB_URL, GIFTGRAPH_WEB_API_URL, GIFTGRAPH_WEB_SECRET
 from services.graph import build_path_graph, build_tree_graph
 from services.parser import validate_gift_access
 from services.visualizer import cleanup_html, render_graph_to_html
@@ -98,7 +98,7 @@ def _format_usernames_html(usernames: List[str]) -> str:
 
 # ── Вспомогательная: загрузка графа в GiftGraph Web ───────────────────────────
 
-async def _upload_to_web(html_path: str, label: str, node_count: int, edge_count: int, path_length: int = 0, node_analytics: Optional[Dict] = None) -> Optional[str]:
+async def _upload_to_web(html_path: str, label: str, node_count: int, edge_count: int, path_length: int = 0) -> Optional[str]:
     """Загружает HTML-граф в GiftGraph Web и возвращает публичную ссылку."""
     import aiohttp
 
@@ -106,27 +106,33 @@ async def _upload_to_web(html_path: str, label: str, node_count: int, edge_count
         with open(html_path, "r", encoding="utf-8") as f:
             html = f.read()
 
-        headers = {"Content-Type": "application/json"}
+        public_base_url = GIFTGRAPH_WEB_URL.rstrip("/")
+        api_base_url = GIFTGRAPH_WEB_API_URL.rstrip("/")
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "GiftGraphBot/1.0",
+        }
         if GIFTGRAPH_WEB_SECRET:
             headers["Authorization"] = f"Bearer {GIFTGRAPH_WEB_SECRET}"
+            headers["X-GiftGraph-Secret"] = GIFTGRAPH_WEB_SECRET
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{GIFTGRAPH_WEB_URL}/api/graphs",
+                f"{api_base_url}/api/graphs",
                 json={
                     "html": html,
                     "label": label,
                     "nodes": node_count,
                     "edges": edge_count,
                     "path_length": path_length,
-                    "node_analytics": node_analytics or {},
                 },
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 if resp.status in (200, 201):
                     data = await resp.json()
-                    return f"{GIFTGRAPH_WEB_URL}{data['url']}"
+                    return f"{public_base_url}{data['url']}"
                 else:
                     logger.warning("GiftGraph Web upload failed: %s %s", resp.status, await resp.text())
                     return None
@@ -301,22 +307,12 @@ async def cmd_search(
         if html_path and os.path.exists(html_path):
             paths = graph_data.get("paths", []) if graph_data else []
             path_len = max(0, len(paths) - 1) if paths else 0
-            # Собираем аналитику для админ-панели
-            node_analytics = {
-                "promo": [],
-                "top": [],
-            }
-            for nid, nd in graph_data.get("nodes", {}).items():
-                label = str(nd.get("label", nid))
-                if nd.get("is_promo"):
-                    node_analytics["promo"].append({"id": nid, "label": label})
             web_url = await _upload_to_web(
                 html_path,
                 f"Граф {users_html}",
                 node_count,
                 edge_count,
                 path_len,
-                node_analytics,
             )
 
         # Формируем caption с ссылкой на сайт

@@ -15,8 +15,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from telethon import TelegramClient
 
-from config import MAX_NODES_PER_GRAPH, BOT_USERNAME
-from services.parser import REQUEST_DELAY, get_user_gifts, get_user_bio
+from config import MAX_NODES_PER_GRAPH
+from services.parser import REQUEST_DELAY, get_user_gifts
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def _make_graph() -> GraphData:
     }
 
 
-def _add_node(graph: GraphData, node_id: str, label: str, anonymous: bool = False, is_bot: bool = False, is_promo: bool = False) -> None:
+def _add_node(graph: GraphData, node_id: str, label: str, anonymous: bool = False, is_bot: bool = False) -> None:
     """Добавить узел в граф (идемпотентно)"""
     if node_id not in graph["nodes"]:
         graph["nodes"][node_id] = {
@@ -48,7 +48,6 @@ def _add_node(graph: GraphData, node_id: str, label: str, anonymous: bool = Fals
             "label": label,
             "anonymous": anonymous,
             "is_bot": is_bot,
-            "is_promo": is_promo,
         }
 
 
@@ -97,29 +96,6 @@ async def build_tree_graph(
     _add_node(graph, clean_start, _at(clean_start))
 
     visited: Set[str] = set()
-    # cache bio→promo results to avoid re-fetching
-    _promo_cache: Dict[str, bool] = {}
-
-    async def _check_promo(username: str) -> bool:
-        """Проверить, содержит ли bio ссылку на бота."""
-        if username in _promo_cache:
-            return _promo_cache[username]
-        if not BOT_USERNAME:
-            _promo_cache[username] = False
-            return False
-        bio = await get_user_bio(client, username)
-        if bio is None:
-            _promo_cache[username] = False
-            return False
-        is_promo = (
-            f"t.me/{BOT_USERNAME}" in bio
-            or f"@{BOT_USERNAME}" in bio
-            or BOT_USERNAME.lower() in bio.lower()
-        )
-        _promo_cache[username] = is_promo
-        if is_promo:
-            logger.info("Обнаружен рекламный аккаунт: @%s", username)
-        return is_promo
 
     # Очередь: (username, текущая_глубина)
     queue: deque[Tuple[str, int]] = deque([(clean_start, 0)])
@@ -168,8 +144,7 @@ async def build_tree_graph(
                 if no_bots and gift.get("is_bot"):
                     continue
                 display_name = _at(sender) if not sender.startswith('id_') else sender
-                is_promo = await _check_promo(sender) if sender not in visited else _promo_cache.get(sender, False)
-                _add_node(graph, sender, display_name, is_bot=gift.get("is_bot", False), is_promo=is_promo)
+                _add_node(graph, sender, display_name, is_bot=gift.get("is_bot", False))
                 _add_edge(graph, sender, current_user)
 
                 # Добавляем отправителя в очередь если не посещён

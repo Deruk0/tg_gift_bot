@@ -3,7 +3,7 @@
 
 Новый режим:
 - граф статичный после первоначальной стабилизации,
-- при движении курсора есть лёгкий параллакс-сдвиг,
+- фон и сетка живут в координатах графа, без параллакс-сдвига canvas,
 - HTML занимает весь экран без отступов,
 - есть переключатель темы,
 - одинаковые связи агрегируются в одну толстую линию.
@@ -31,46 +31,44 @@ logger = logging.getLogger(__name__)
 
 COLORS = {
     "dark": {
-        "page": "#050816",
-        "page_glow": "rgba(124, 58, 237, 0.18)",
-        "panel": "rgba(10, 14, 30, 0.72)",
-        "panel_strong": "rgba(10, 14, 30, 0.90)",
-        "border": "rgba(255, 255, 255, 0.10)",
-        "text": "#e5e7eb",
-        "muted": "#94a3b8",
-        "start_node": "#ffffff",
-        "path_node": "#9ca3af",
-        "regular": "#7c3aed",
-        "anonymous": "#f97316",
-        "bot": "#14b8a6",
-        "promo": "#f59e0b",
-        "edge": "#4b5563",
-        "edge_path": "#9ca3af",
-        "edge_start": "#8b5cf6",
-        "shadow": "rgba(124, 58, 237, 0.35)",
-        "button_bg": "rgba(255, 255, 255, 0.07)",
-        "button_hover": "rgba(255, 255, 255, 0.13)",
+        "page": "#0d0f12",
+        "page_glow": "rgba(213, 150, 69, 0.10)",
+        "panel": "rgba(20, 22, 25, 0.76)",
+        "panel_strong": "rgba(30, 32, 36, 0.94)",
+        "border": "rgba(241, 238, 230, 0.15)",
+        "text": "#f1eee6",
+        "muted": "#ada69a",
+        "start_node": "#e8dfcf",
+        "path_node": "#c9ad78",
+        "regular": "#7aa6a1",
+        "anonymous": "#d59645",
+        "bot": "#8d929a",
+        "edge": "#596068",
+        "edge_path": "#b69c6d",
+        "edge_start": "#d59645",
+        "shadow": "rgba(213, 150, 69, 0.22)",
+        "button_bg": "rgba(241, 238, 230, 0.07)",
+        "button_hover": "rgba(241, 238, 230, 0.13)",
     },
     "light": {
-        "page": "#f8fafc",
-        "page_glow": "rgba(148, 163, 184, 0.18)",
-        "panel": "rgba(255, 255, 255, 0.74)",
-        "panel_strong": "rgba(255, 255, 255, 0.92)",
-        "border": "rgba(15, 23, 42, 0.10)",
-        "text": "#0f172a",
-        "muted": "#475569",
-        "start_node": "#0f172a",
-        "path_node": "#9ca3af",
-        "regular": "#7c3aed",
-        "anonymous": "#f97316",
-        "bot": "#0d9488",
-        "promo": "#d97706",
-        "edge": "#64748b",
-        "edge_path": "#9ca3af",
-        "edge_start": "#6d28d9",
-        "shadow": "rgba(15, 23, 42, 0.16)",
-        "button_bg": "rgba(15, 23, 42, 0.05)",
-        "button_hover": "rgba(15, 23, 42, 0.09)",
+        "page": "#f2eee6",
+        "page_glow": "rgba(169, 103, 31, 0.12)",
+        "panel": "rgba(255, 252, 245, 0.78)",
+        "panel_strong": "rgba(255, 254, 250, 0.96)",
+        "border": "rgba(26, 27, 28, 0.14)",
+        "text": "#17191b",
+        "muted": "#65615a",
+        "start_node": "#17191b",
+        "path_node": "#8a6b40",
+        "regular": "#527f7a",
+        "anonymous": "#a9671f",
+        "bot": "#69707a",
+        "edge": "#8b908e",
+        "edge_path": "#8a6b40",
+        "edge_start": "#a9671f",
+        "shadow": "rgba(57, 46, 29, 0.18)",
+        "button_bg": "rgba(26, 27, 28, 0.05)",
+        "button_hover": "rgba(26, 27, 28, 0.09)",
     },
 }
 
@@ -80,7 +78,7 @@ PYVIS_OPTIONS = """
 {
   "nodes": {
     "borderWidth": 2,
-    "shadow": { "enabled": true, "color": "rgba(124, 58, 237, 0.22)", "size": 8, "x": 0, "y": 0 }
+    "shadow": { "enabled": true, "color": "rgba(213, 150, 69, 0.16)", "size": 8, "x": 0, "y": 0 }
   },
   "edges": {
     "smooth": { "enabled": true, "type": "dynamic", "roundness": 0.18 },
@@ -145,15 +143,13 @@ def _theme_colors(theme: str) -> Dict[str, str]:
     return COLORS[theme if theme in COLORS else BASE_THEME]
 
 
-def _node_kind(node_id: str, start_node: str, path_nodes: Set[str], anonymous: bool, is_bot: bool, is_promo: bool = False) -> str:
+def _node_kind(node_id: str, start_node: str, path_nodes: Set[str], anonymous: bool, is_bot: bool) -> str:
     if node_id == start_node:
         return "start"
     if node_id in path_nodes:
         return "path"
     if is_bot:
         return "bot"
-    if is_promo:
-        return "promo"
     if anonymous:
         return "anonymous"
     return "regular"
@@ -204,8 +200,7 @@ def _compute_visual_data(graph_data: Dict[str, Any]) -> Tuple[Dict[str, Dict[str
         label = str(node_data.get("label", node_id))
         anonymous = bool(node_data.get("anonymous", False))
         is_bot = bool(node_data.get("is_bot", False))
-        is_promo = bool(node_data.get("is_promo", False))
-        kind = _node_kind(node_id, start_node, path_nodes, anonymous, is_bot, is_promo)
+        kind = _node_kind(node_id, start_node, path_nodes, anonymous, is_bot)
         degree = int(degrees.get(node_id, 0))
         level = tree_levels.get(node_id)
         if node_id.startswith("id_") and kind != "start":
@@ -219,8 +214,6 @@ def _compute_visual_data(graph_data: Dict[str, Any]) -> Tuple[Dict[str, Dict[str
             size = 26 + min(degree, 14) * 1.2
         elif kind == "bot":
             size = 18 + min(degree, 16) * 0.8
-        elif kind == "promo":
-            size = 22 + min(degree, 18) * 1.0
         elif kind == "anonymous":
             size = 14 + min(degree, 8) * 0.5
         else:
@@ -231,7 +224,6 @@ def _compute_visual_data(graph_data: Dict[str, Any]) -> Tuple[Dict[str, Dict[str
             "label": label,
             "anonymous": anonymous,
             "is_bot": is_bot,
-            "is_promo": is_promo,
             "degree": degree,
             "level": level,
             "size": round(size, 1),
@@ -336,27 +328,23 @@ def _build_pyvis_network(
     for node_id, meta in node_meta.items():
         kind = meta["kind"]
         if kind == "start":
-            node_color = {"background": theme["start_node"], "border": "#cbd5e1"}
+            node_color = {"background": theme["start_node"], "border": theme["text"]}
             font_color = theme["text"]
             bold = True
         elif kind == "path":
-            node_color = {"background": theme["path_node"], "border": "#9ca3af"}
+            node_color = {"background": theme["path_node"], "border": theme["edge_path"]}
             font_color = theme["text"]
             bold = False
         elif kind == "anonymous":
-            node_color = {"background": theme["anonymous"], "border": "#94a3b8"}
+            node_color = {"background": theme["anonymous"], "border": theme["edge"]}
             font_color = theme["muted"]
             bold = False
         elif kind == "bot":
-            node_color = {"background": theme["bot"], "border": "#0d9488"}
+            node_color = {"background": theme["bot"], "border": theme["edge"]}
             font_color = theme["text"]
             bold = False
-        elif kind == "promo":
-            node_color = {"background": theme["promo"], "border": "#b45309"}
-            font_color = theme["text"]
-            bold = True
         else:
-            node_color = {"background": theme["regular"], "border": "#6d28d9"}
+            node_color = {"background": theme["regular"], "border": theme["edge"]}
             font_color = theme["text"]
             bold = False
 
@@ -396,7 +384,7 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
     var t = 'dark';
     try { t = localStorage.getItem('giftgraph-theme') || 'dark'; } catch(e){}
     document.documentElement.setAttribute('data-theme', t);
-    document.documentElement.style.background = t === 'light' ? '#eff2f8' : '#050816';
+    document.documentElement.style.background = t === 'light' ? '#f2eee6' : '#0d0f12';
   })();
 </script>
 <style>
@@ -429,7 +417,7 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
     z-index: 0;
     background:
       radial-gradient(circle at 20% 20%, var(--giftgraph-glow), transparent 36%),
-      radial-gradient(circle at 80% 80%, rgba(59, 130, 246, 0.10), transparent 30%),
+      radial-gradient(circle at 80% 80%, rgba(122, 166, 161, 0.10), transparent 30%),
       linear-gradient(180deg, var(--giftgraph-page), var(--giftgraph-page));
   }
 
@@ -608,8 +596,7 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
   }
 
   .vis-network canvas {
-    transition: transform 120ms ease-out, filter 160ms ease;
-    will-change: transform;
+    transition: filter 160ms ease;
   }
 
   .vis-tooltip {
@@ -627,25 +614,29 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
   }
 
   [data-theme="dark"] {
-    --giftgraph-page: #050816;
-    --giftgraph-panel: rgba(10, 14, 30, 0.82);
-    --giftgraph-border: rgba(255, 255, 255, 0.10);
-    --giftgraph-text: #e5e7eb;
-    --giftgraph-muted: #94a3b8;
-    --giftgraph-glow: rgba(124, 58, 237, 0.18);
-    --giftgraph-button: rgba(255, 255, 255, 0.07);
-    --giftgraph-button-hover: rgba(255, 255, 255, 0.13);
+    --giftgraph-page: #0d0f12;
+    --giftgraph-panel: rgba(20, 22, 25, 0.82);
+    --giftgraph-border: rgba(241, 238, 230, 0.15);
+    --giftgraph-text: #f1eee6;
+    --giftgraph-muted: #ada69a;
+    --giftgraph-glow: rgba(213, 150, 69, 0.10);
+    --giftgraph-accent: #d59645;
+    --giftgraph-accent-2: #7aa6a1;
+    --giftgraph-button: rgba(241, 238, 230, 0.07);
+    --giftgraph-button-hover: rgba(241, 238, 230, 0.13);
   }
 
   [data-theme="light"] {
-    --giftgraph-page: #eff2f8;
-    --giftgraph-panel: rgba(255, 255, 255, 0.80);
-    --giftgraph-border: rgba(148, 163, 184, 0.26);
-    --giftgraph-text: #0f172a;
-    --giftgraph-muted: #475569;
-    --giftgraph-glow: rgba(59, 130, 246, 0.10);
-    --giftgraph-button: rgba(255, 255, 255, 0.82);
-    --giftgraph-button-hover: rgba(255, 255, 255, 0.96);
+    --giftgraph-page: #f2eee6;
+    --giftgraph-panel: rgba(255, 252, 245, 0.84);
+    --giftgraph-border: rgba(26, 27, 28, 0.14);
+    --giftgraph-text: #17191b;
+    --giftgraph-muted: #65615a;
+    --giftgraph-glow: rgba(169, 103, 31, 0.12);
+    --giftgraph-accent: #a9671f;
+    --giftgraph-accent-2: #527f7a;
+    --giftgraph-button: rgba(26, 27, 28, 0.05);
+    --giftgraph-button-hover: rgba(26, 27, 28, 0.09);
   }
 </style>
 """
@@ -657,33 +648,28 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
     <div id="giftgraph-card">
       <div id="giftgraph-title">⟢ GiftGraph</div>
       <div id="giftgraph-subtitle">
-        Узлов: <b>{nodes}</b> · Рёбер: <b>{edges}</b>{path_text}
+        Узлов: <b>{nodes}</b> · Рёбер: <b>{edges}</b>
       </div>
       <div id="giftgraph-legend">
         <span class="giftgraph-pill"><span class="giftgraph-dot" data-kind="start" style="background:{start_color}"></span>Старт</span>
         <span class="giftgraph-pill"><span class="giftgraph-dot" data-kind="regular" style="background:{regular_color}"></span>Обычный узел</span>
-        <span class="giftgraph-pill"><span class="giftgraph-dot" data-kind="path" style="background:{path_color}"></span>Путь</span>
         <span class="giftgraph-pill"><span class="giftgraph-dot" data-kind="anonymous" style="background:{anonymous_color}"></span>Анонимный</span>
         <span class="giftgraph-pill"><span class="giftgraph-dot" data-kind="bot" style="background:{bot_color}"></span>Бот</span>
-        <span class="giftgraph-pill"><span class="giftgraph-dot" data-kind="promo" style="background:{promo_color}"></span>Реклама</span>
       </div>
     </div>
     <div id="giftgraph-actions">
-      <button id="giftgraph-theme-toggle" class="giftgraph-button" type="button">🌙 Тёмная</button>
+      <button id="giftgraph-theme-toggle" class="giftgraph-button" type="button">Темная</button>
     </div>
   </div>
-  <div id="giftgraph-hint">Колесо — zoom · Drag — панорамирование и перемещение узлов · ⚙ — настройки</div>
+  <div id="giftgraph-hint">Колесо: масштаб · drag: панорама и узлы</div>
 </div>
 """.format(
         nodes=meta["summary"]["nodes"],
         edges=meta["summary"]["edges"],
-        path_text=f" · Путь: <b>{meta['summary']['path_length']}</b> шагов" if meta["summary"]["has_path"] else "",
         start_color=COLORS['dark']['start_node'],
         regular_color=COLORS['dark']['regular'],
-        path_color=COLORS['dark']['path_node'],
         anonymous_color=COLORS['dark']['anonymous'],
         bot_color=COLORS['dark']['bot'],
-        promo_color=COLORS['dark']['promo'],
     )
 
     script_block = """
@@ -722,7 +708,6 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
     if (info.kind === 'start')     return 44;
     if (info.kind === 'path')      return 26 + Math.min(degree, 14) * 1.2;
     if (info.kind === 'bot')       return 18 + Math.min(degree, 16) * 0.8;
-    if (info.kind === 'promo')     return 22 + Math.min(degree, 18) * 1.0;
     if (info.kind === 'anonymous') return 14 + Math.min(degree, 8)  * 0.5;
     return 20 + Math.min(degree, 18) * 1.0;
   }
@@ -731,21 +716,18 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
     const size = nodeBaseSize(info);
     const fontBase = info.kind === 'start' ? 17 : info.kind === 'anonymous' || info.kind === 'bot' ? 9 : 13;
     if (info.kind === 'start')
-      return { color: { background: palette.start_node, border: '#cbd5e1' },
+      return { color: { background: palette.start_node, border: palette.text },
                size, font: { color: palette.text,  size: fontBase, bold: true  } };
     if (info.kind === 'path')
-      return { color: { background: palette.path_node,  border: '#9ca3af' },
+      return { color: { background: palette.path_node,  border: palette.edge_path },
                size, font: { color: palette.text,  size: fontBase, bold: false } };
     if (info.kind === 'anonymous')
-      return { color: { background: palette.anonymous,  border: '#ea8a38' },
+      return { color: { background: palette.anonymous,  border: palette.edge },
                size, font: { color: palette.muted, size: fontBase, bold: false } };
     if (info.kind === 'bot')
-      return { color: { background: palette.bot,  border: '#0d9488' },
+      return { color: { background: palette.bot,  border: palette.edge },
                size, font: { color: palette.text, size: fontBase, bold: false } };
-    if (info.kind === 'promo')
-      return { color: { background: palette.promo,  border: '#b45309' },
-               size, font: { color: palette.text, size: fontBase, bold: true } };
-    return   { color: { background: palette.regular,    border: '#6d28d9' },
+    return   { color: { background: palette.regular,    border: palette.edge },
                size, font: { color: palette.text,  size: fontBase, bold: false } };
   }
 
@@ -774,7 +756,7 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
     if (shell) shell.setAttribute('data-theme', themeName);
 
     const grad = `radial-gradient(circle at 20% 20%, ${palette.page_glow}, transparent 36%),`
-               + `radial-gradient(circle at 80% 80%, rgba(59,130,246,0.10), transparent 30%),`
+               + `radial-gradient(circle at 80% 80%, rgba(122,166,161,0.10), transparent 30%),`
                + `linear-gradient(180deg, ${palette.page}, ${palette.page})`;
     [document.body, bg].forEach(el => {
       if (!el) return;
@@ -782,16 +764,14 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
       el.style.backgroundImage = grad;
     });
     if (container) container.style.background = 'transparent';
-    if (toggle)   toggle.textContent = themeName === 'light' ? '🌙 Тёмная' : '☀️ Светлая';
+    if (toggle)   toggle.textContent = themeName === 'light' ? 'Темная' : 'Светлая';
     if (subtitle) subtitle.style.color = palette.muted;
     legendDots.forEach(dot => {
       const k = dot.getAttribute('data-kind');
       if (k === 'start')     dot.style.background = palette.start_node;
       if (k === 'regular')   dot.style.background = palette.regular;
-      if (k === 'path')      dot.style.background = palette.path_node;
       if (k === 'anonymous') dot.style.background = palette.anonymous;
       if (k === 'bot')      dot.style.background = palette.bot;
-      if (k === 'promo')   dot.style.background = palette.promo;
     });
 
     try {
@@ -832,28 +812,6 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
     });
   }
 
-  // ── parallax ──────────────────────────────────────────────────────────
-  function initParallax() {
-    const canvas = document.querySelector('#mynetwork canvas');
-    if (!canvas) return;
-    let raf = 0, lx = 0.5, ly = 0.5;
-    const paint = () => {
-      raf = 0;
-      const dx = (lx - 0.5) * 10, dy = (ly - 0.5) * 10;
-      canvas.style.transform = `translate3d(${dx}px,${dy}px,0)`;
-    };
-    canvas.addEventListener('pointermove', ev => {
-      const r = canvas.getBoundingClientRect();
-      if (!r.width) return;
-      lx = (ev.clientX - r.left) / r.width;
-      ly = (ev.clientY - r.top)  / r.height;
-      if (!raf) raf = requestAnimationFrame(paint);
-    }, { passive: true });
-    canvas.addEventListener('pointerleave', () => {
-      canvas.style.transform = 'translate3d(0,0,0)';
-    }, { passive: true });
-  }
-
   // ── settings panel ────────────────────────────────────────────────────
   function buildSettingsPanel() {
     if (!shell || document.getElementById('giftgraph-settings-panel')) return;
@@ -862,29 +820,29 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
     panel.style.cssText = 'position:absolute;right:18px;bottom:18px;z-index:40;pointer-events:auto;display:flex;flex-direction:column;gap:8px;align-items:flex-end;';
     panel.innerHTML = `
       <div id="gg-sbox" style="background:var(--giftgraph-panel);border:1px solid var(--giftgraph-border);border-radius:14px;padding:14px;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);width:230px;display:none;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
-        <div style="font-size:13px;font-weight:700;color:var(--giftgraph-text);margin-bottom:12px;">⚙ Настройки</div>
+        <div style="font-size:13px;font-weight:700;color:var(--giftgraph-text);margin-bottom:12px;">Настройки</div>
         <div style="display:flex;flex-direction:column;gap:12px;">
           <label style="font-size:11px;color:var(--giftgraph-muted);display:block;">
             Размер узлов <span id="vns" style="float:right;font-weight:600;color:var(--giftgraph-text);">1.0×</span>
-            <input id="sns" type="range" min="0.5" max="2.5" step="0.05" value="1" style="width:100%;margin-top:4px;accent-color:#7c3aed;cursor:pointer;">
+            <input id="sns" type="range" min="0.5" max="2.5" step="0.05" value="1" style="width:100%;margin-top:4px;accent-color:var(--giftgraph-accent);cursor:pointer;">
           </label>
           <label style="font-size:11px;color:var(--giftgraph-muted);display:block;">
             Толщина линий <span id="ves" style="float:right;font-weight:600;color:var(--giftgraph-text);">1.0×</span>
-            <input id="ses" type="range" min="0.5" max="3.0" step="0.05" value="1" style="width:100%;margin-top:4px;accent-color:#7c3aed;cursor:pointer;">
+            <input id="ses" type="range" min="0.5" max="3.0" step="0.05" value="1" style="width:100%;margin-top:4px;accent-color:var(--giftgraph-accent);cursor:pointer;">
           </label>
           <label style="font-size:11px;color:var(--giftgraph-muted);display:block;">
             Расстояние <span id="vsp" style="float:right;font-weight:600;color:var(--giftgraph-text);">350</span>
-            <input id="ssp" type="range" min="80" max="700" step="10" value="350" style="width:100%;margin-top:4px;accent-color:#7c3aed;cursor:pointer;">
+            <input id="ssp" type="range" min="80" max="700" step="10" value="350" style="width:100%;margin-top:4px;accent-color:var(--giftgraph-accent);cursor:pointer;">
           </label>
           <label style="font-size:11px;color:var(--giftgraph-muted);display:block;">
             Расталкивание <span id="vrp" style="float:right;font-weight:600;color:var(--giftgraph-text);">350</span>
-            <input id="srp" type="range" min="50" max="800" step="10" value="350" style="width:100%;margin-top:4px;accent-color:#7c3aed;cursor:pointer;">
+            <input id="srp" type="range" min="50" max="800" step="10" value="350" style="width:100%;margin-top:4px;accent-color:var(--giftgraph-accent);cursor:pointer;">
           </label>
           <button id="btn-apply" class="giftgraph-button" type="button" style="width:100%;margin-top:2px;">Применить</button>
-          <button id="btn-reshuffle" class="giftgraph-button" type="button" style="width:100%;">🔀 Перемешать</button>
+          <button id="btn-reshuffle" class="giftgraph-button" type="button" style="width:100%;">Перемешать</button>
         </div>
       </div>
-      <button id="btn-settings-toggle" class="giftgraph-button" type="button" title="Настройки">⚙</button>
+      <button id="btn-settings-toggle" class="giftgraph-button" type="button" title="Настройки">Настройки</button>
     `;
     shell.appendChild(panel);
 
@@ -1021,7 +979,7 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
       const d = net.body.data.nodes.get(p.node);
       if (!d) return;
 
-      const bg = (d.color && typeof d.color === 'object') ? d.color.background : '#7c3aed';
+      const bg = (d.color && typeof d.color === 'object') ? d.color.background : '#7aa6a1';
       // deep-copy current state
       _hoverSaved[p.node] = {
         size:        d.size,
@@ -1137,7 +1095,6 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
   // ── bootstrap ─────────────────────────────────────────────────────────
   buildSettingsPanel();
   bindToggle();
-  initParallax();
 
   // Apply theme immediately so CSS vars are correct before network loads
   (function initTheme() {
@@ -1146,23 +1103,21 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
     if (shell) shell.setAttribute('data-theme', t);
     const palette = PALETTE[t] || PALETTE.dark;
     const grad = `radial-gradient(circle at 20% 20%, ${palette.page_glow}, transparent 36%),`
-               + `radial-gradient(circle at 80% 80%, rgba(59,130,246,0.10), transparent 30%),`
+               + `radial-gradient(circle at 80% 80%, rgba(122,166,161,0.10), transparent 30%),`
                + `linear-gradient(180deg, ${palette.page}, ${palette.page})`;
     [document.body, bg].forEach(el => {
       if (!el) return;
       el.style.background = palette.page;
       el.style.backgroundImage = grad;
     });
-    if (toggle) toggle.textContent = t === 'light' ? '🌙 Тёмная' : '☀️ Светлая';
+    if (toggle) toggle.textContent = t === 'light' ? 'Темная' : 'Светлая';
     if (subtitle) subtitle.style.color = palette.muted;
     legendDots.forEach(dot => {
       const k = dot.getAttribute('data-kind');
       if (k === 'start')     dot.style.background = palette.start_node;
       if (k === 'regular')   dot.style.background = palette.regular;
-      if (k === 'path')      dot.style.background = palette.path_node;
       if (k === 'anonymous') dot.style.background = palette.anonymous;
       if (k === 'bot')      dot.style.background = palette.bot;
-      if (k === 'promo')   dot.style.background = palette.promo;
     });
   })();
 
@@ -1185,9 +1140,6 @@ def _inject_theme_shell(html: str, meta: Dict[str, Any]) -> str:
     };
     net.once('stabilizationIterationsDone', onStable);
     net.once('stabilized', onStable);
-
-    // Load admin promo overrides
-    loadPromoOverrides().then(() => applyPromoOverrides());
   }
   boot();
 })();
@@ -1205,7 +1157,7 @@ async def render_graph_to_html(graph_data: Dict[str, Any]) -> Optional[str]:
     """
     Строит интерактивный PyVis граф и возвращает HTML-файл.
     HTML можно открыть в браузере: он занимает весь экран, статичен после
-    стабилизации и поддерживает лёгкий параллакс при движении мыши.
+    стабилизации и не двигает canvas отдельно от координат графа.
     """
     if not graph_data.get("nodes"):
         logger.warning("render_graph_to_html: получен пустой граф")

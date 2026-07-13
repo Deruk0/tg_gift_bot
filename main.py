@@ -11,8 +11,10 @@
 import asyncio
 import logging
 import sys
+from urllib.parse import unquote, urlparse
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from telethon import TelegramClient
@@ -54,6 +56,43 @@ logger = logging.getLogger(__name__)
 BUILD_TAG = "v2026-05-29-tree-ui"
 
 
+def _proxy_log_label(proxy_url: str) -> str:
+    parsed = urlparse(proxy_url)
+    host = parsed.hostname or "?"
+    port = parsed.port or "?"
+    return f"{parsed.scheme}://{host}:{port}"
+
+
+def _telethon_proxy_from_url(proxy_url: str):
+    if not proxy_url:
+        return None
+
+    parsed = urlparse(proxy_url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"socks4", "socks5", "socks5h", "http", "https"}:
+        raise ValueError("TELEGRAM_PROXY must use socks4, socks5, socks5h, http, or https")
+    if not parsed.hostname or not parsed.port:
+        raise ValueError("TELEGRAM_PROXY must include host and port")
+
+    try:
+        import socks
+    except ImportError as exc:
+        raise RuntimeError("Install PySocks to use TELEGRAM_PROXY") from exc
+
+    proxy_type = {
+        "socks4": socks.SOCKS4,
+        "socks5": socks.SOCKS5,
+        "socks5h": socks.SOCKS5,
+        "http": socks.HTTP,
+        "https": socks.HTTP,
+    }[scheme]
+    username = unquote(parsed.username) if parsed.username else None
+    password = unquote(parsed.password) if parsed.password else None
+    rdns = scheme in {"socks5", "socks5h"}
+
+    return (proxy_type, parsed.hostname, parsed.port, rdns, username, password)
+
+
 # ── Жизненный цикл бота ────────────────────────────────────────────────────────
 
 async def _start_telethon() -> TelegramClient:
@@ -72,7 +111,11 @@ async def _start_telethon() -> TelegramClient:
         session = config.TELETHON_SESSION
         logger.info("Подключаем Telethon userbot (файл-сессия: %s)...", config.TELETHON_SESSION)
 
-    client = TelegramClient(session, config.API_ID, config.API_HASH)
+    proxy = _telethon_proxy_from_url(config.TELEGRAM_PROXY)
+    if proxy:
+        logger.info("Telethon proxy: %s", _proxy_log_label(config.TELEGRAM_PROXY))
+
+    client = TelegramClient(session, config.API_ID, config.API_HASH, proxy=proxy)
 
     try:
         await client.connect()
@@ -117,9 +160,14 @@ async def main() -> None:
         # Продолжаем запуск: бот будет работать, но /search выдаст понятную ошибку
 
     # ── Создание бота и диспетчера ─────────────────────────────────────────────
+    bot_session = AiohttpSession(proxy=config.TELEGRAM_PROXY or None)
+    if config.TELEGRAM_PROXY:
+        logger.info("Bot API proxy: %s", _proxy_log_label(config.TELEGRAM_PROXY))
+
     bot = Bot(
         token=config.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        session=bot_session,
     )
     dp = Dispatcher()
 

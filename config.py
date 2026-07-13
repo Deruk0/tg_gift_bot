@@ -16,6 +16,7 @@ API_ID: int = int(os.environ["API_ID"])
 API_HASH: str = os.environ["API_HASH"]
 TELETHON_SESSION: str = os.getenv("TELETHON_SESSION", "userbot")
 TELETHON_STRING_SESSION: str = os.getenv("TELETHON_STRING_SESSION", "").strip()
+TELEGRAM_PROXY: str = os.getenv("TELEGRAM_PROXY", "").strip()
 
 # ── Промокоды: {"КОД": количество_дней} ───────────────────────────────────────
 # Значение 0 = навсегда (подписка до 9999-12-31)
@@ -40,8 +41,6 @@ MAX_NODES_PER_GRAPH: int = 500
 ADMIN_USER_ID: int = 6908507355
 
 # ── GiftGraph Web (сервис постоянного хостинга графов) ─────────────────────────
-GIFTGRAPH_WEB_URL: str = os.getenv("GIFTGRAPH_WEB_URL", "https://giftgraph-web-szeruko.zocomputer.io")
+GIFTGRAPH_WEB_URL: str = os.getenv("GIFTGRAPH_WEB_URL", "https://giftgraph-deruko.gamer.gd").rstrip("/")
+GIFTGRAPH_WEB_API_URL: str = os.getenv("GIFTGRAPH_WEB_API_URL", GIFTGRAPH_WEB_URL).rstrip("/")
 GIFTGRAPH_WEB_SECRET: str = os.getenv("GIFTGRAPH_WEB_SECRET", "").strip()
-
-# ── Username бота (для детекции рекламных аккаунтов) ─────────────────────
-BOT_USERNAME: str = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
