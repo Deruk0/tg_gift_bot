@@ -1,5 +1,5 @@
 # Секреты
-# .env is intentionally versioned in this private repo
+.env
 
 # Telethon-сессии
 # userbot.session is intentionally versioned in this private repo
