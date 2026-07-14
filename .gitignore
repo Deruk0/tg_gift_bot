@@ -1,1 +1,20 @@
-*
+# Секреты
+.env
+
+# Telethon-сессии
+# userbot.session is intentionally versioned in this private repo
+*.session-journal
+
+# База и логи
+# giftgraph.db is intentionally versioned in this private repo
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Временные файлы рендера
+*_graph.html
+*_graph.png
