@@ -21,6 +21,7 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 
 import config
+from miniapp import miniapp_available
 from database.db import init_db
 from handlers import search, start, subscription
 from middlewares.limits import LimitsMiddleware
@@ -172,10 +173,11 @@ async def main() -> None:
     dp = Dispatcher()
 
     # ── Регистрация команд (меню при вводе / в чате Telegram) ─────────────────
-    from aiogram.types import BotCommand, BotCommandScopeDefault
+    from aiogram.types import BotCommand, BotCommandScopeDefault, MenuButtonWebApp, WebAppInfo
 
     commands = [
         BotCommand(command="start", description="👋 Начать работу с ботом"),
+        BotCommand(command="app", description="🕸 Открыть мини-приложение GiftGraph"),
         BotCommand(command="search", description="🕸 Построить граф связей (tree/path)"),
         BotCommand(command="subscribe", description="⭐ Купить/проверить подписку"),
         BotCommand(command="promo", description="🎁 Активировать промокод"),
@@ -183,6 +185,10 @@ async def main() -> None:
         BotCommand(command="admin", description="⚙️ Админ-панель (только для админа)"),
     ]
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+    if miniapp_available(config.GIFTGRAPH_WEB_URL):
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="GiftGraph", web_app=WebAppInfo(url=config.GIFTGRAPH_WEB_URL))
+        )
     logger.info("Команды бота зарегистрированы в BotFather")
 
     # ── Регистрация middleware ─────────────────────────────────────────────────

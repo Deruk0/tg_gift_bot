@@ -9,6 +9,8 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from database.db import get_or_create_user
+from config import GIFTGRAPH_WEB_URL
+from miniapp import graph_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -45,8 +47,19 @@ async def cmd_start(message: Message) -> None:
         "• Промокод: /promo КОД\n\n"
         "ℹ️ Полная справка: /help",
         parse_mode="HTML",
+        reply_markup=graph_keyboard(GIFTGRAPH_WEB_URL, message.chat.type == "private"),
     )
     logger.info("Пользователь %d запустил бота", message.from_user.id)
+
+
+@router.message(Command("app"))
+async def cmd_app(message: Message) -> None:
+    """Open the graph archive inside Telegram in private chats."""
+    await message.answer(
+        "🕸 GiftGraph — открой архив и выбери граф.\n"
+        "Для построения нового графа используй /search @username в чате бота.",
+        reply_markup=graph_keyboard(GIFTGRAPH_WEB_URL, message.chat.type == "private"),
+    )
 
 
 @router.message(Command("help"))

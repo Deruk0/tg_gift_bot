@@ -41,6 +41,6 @@ MAX_NODES_PER_GRAPH: int = 500
 ADMIN_USER_ID: int = 6908507355
 
 # ── GiftGraph Web (сервис постоянного хостинга графов) ─────────────────────────
-GIFTGRAPH_WEB_URL: str = os.getenv("GIFTGRAPH_WEB_URL", "https://giftgraph-deruko.gamer.gd").rstrip("/")
+GIFTGRAPH_WEB_URL: str = os.getenv("GIFTGRAPH_WEB_URL", "https://giftgraph-miniapp.vercel.app").rstrip("/")
 GIFTGRAPH_WEB_API_URL: str = os.getenv("GIFTGRAPH_WEB_API_URL", GIFTGRAPH_WEB_URL).rstrip("/")
 GIFTGRAPH_WEB_SECRET: str = os.getenv("GIFTGRAPH_WEB_SECRET", "").strip()

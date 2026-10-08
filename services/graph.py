@@ -87,7 +87,7 @@ async def build_tree_graph(
         GraphData — граф в памяти (удалить после отправки!)
     """
     include_anon = gifts_mode == "all"
-    clean_start = start_username.lstrip("@")
+    clean_start = start_username.lstrip("@").strip().lower()
 
     graph = _make_graph()
     graph["start"] = clean_start
@@ -130,7 +130,7 @@ async def build_tree_graph(
 
             if gift["anonymous"]:
                 # Анонимный отправитель — создаём узел-заглушку
-                anon_id = f"anon_{len(graph['nodes'])}"
+                anon_id = f"anon_{clean_start}_{current_user}_{len(graph['nodes'])}"
                 _add_node(graph, anon_id, "?", anonymous=True)
                 _add_edge(graph, anon_id, current_user)
             else:
@@ -140,7 +140,7 @@ async def build_tree_graph(
                 if not sender:
                     continue
 
-                sender = sender.lstrip("@")
+                sender = sender.lstrip("@").strip().lower()
                 if no_bots and gift.get("is_bot"):
                     continue
                 display_name = _at(sender) if not sender.startswith('id_') else sender
@@ -186,12 +186,19 @@ async def build_path_graph(
     Returns:
         GraphData с заполненным полем "paths"
     """
-    clean_users = [u.lstrip("@") for u in usernames]
+    clean_users = list(dict.fromkeys(u.lstrip("@").strip().lower() for u in usernames))
+    if not clean_users:
+        return _make_graph()
+    if len(clean_users) > MAX_NODES_PER_GRAPH:
+        raise ValueError("Количество стартовых пользователей превышает лимит узлов")
 
     # Объединённый граф
     combined = _make_graph()
     combined["start"] = clean_users[0]
     combined["targets"] = clean_users[1:]
+    # Reserve room for every requested profile before merging their trees.
+    for user in clean_users:
+        _add_node(combined, user, _at(user))
 
     # Список смежности для поиска пути (двунаправленный)
     adjacency: Dict[str, Set[str]] = {}
@@ -201,11 +208,13 @@ async def build_path_graph(
 
         # Объединяем узлы
         for node_id, node_data in partial["nodes"].items():
-            if node_id not in combined["nodes"]:
+            if node_id not in combined["nodes"] and len(combined["nodes"]) < MAX_NODES_PER_GRAPH:
                 combined["nodes"][node_id] = node_data
 
         # Объединяем рёбра и строим список смежности
         for src, dst, label in partial["edges"]:
+            if src not in combined["nodes"] or dst not in combined["nodes"]:
+                continue
             combined["edges"].append((src, dst, label))
             # Граф рассматриваем как ненаправленный для поиска пути
             adjacency.setdefault(src, set()).add(dst)

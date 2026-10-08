@@ -12,6 +12,7 @@ GetUserStarGiftsRequest удалён из API (Layer 189+).
 """
 import asyncio
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from telethon import TelegramClient
@@ -155,35 +156,36 @@ def _resolve_sender(
         if isinstance(raw_from, PeerUser):
             user = users_map.get(raw_from.user_id)
             if user is not None:
-                name = user.username or f"id{user.id}"
+                name = user.username or f"id_{user.id}"
                 is_bot = getattr(user, 'bot', False)
                 return user.id, name, False, is_bot
             else:
-                return raw_from.user_id, f"id{raw_from.user_id}", False, False
+                return raw_from.user_id, f"id_{raw_from.user_id}", False, False
 
         elif isinstance(raw_from, PeerChannel):
             chat = chats_map.get(raw_from.channel_id)
-            name = getattr(chat, "username", None) or getattr(chat, "title", f"chat{raw_from.channel_id}")
+            name = getattr(chat, "username", None) or f"id_-100{raw_from.channel_id}"
             is_bot = getattr(chat, 'bot', False)
             return raw_from.channel_id, name, False, is_bot
 
         elif isinstance(raw_from, PeerChat):
             chat = chats_map.get(raw_from.chat_id)
-            name = getattr(chat, "title", f"chat{raw_from.chat_id}")
+            name = f"id_-{raw_from.chat_id}"
             return raw_from.chat_id, name, False, False
 
         elif isinstance(raw_from, int):
             user = users_map.get(raw_from)
             if user is not None:
-                name = user.username or f"id{user.id}"
+                name = user.username or f"id_{user.id}"
                 is_bot = getattr(user, 'bot', False)
                 return user.id, name, False, is_bot
             chat = chats_map.get(raw_from)
             if chat is not None:
-                name = getattr(chat, "username", None) or getattr(chat, "title", f"chat{raw_from}")
+                peer_id = f"-100{raw_from}" if isinstance(chat, Channel) else f"-{raw_from}"
+                name = getattr(chat, "username", None) or f"id_{peer_id}"
                 is_bot = getattr(chat, 'bot', False)
                 return raw_from, name, False, is_bot
-            return raw_from, f"id{raw_from}", False, False
+            return raw_from, f"id_{raw_from}", False, False
 
     except Exception as exc:
         logger.debug("Ошибка разрешения отправителя из Peer: %s", exc)
@@ -232,7 +234,9 @@ async def get_user_gifts(
 
     # Получаем entity и input_peer пользователя
     try:
-        entity = await client.get_entity(clean_username)
+        numeric_id = re.fullmatch(r"(?:id_)?(-?\d+)", clean_username)
+        peer = int(numeric_id.group(1)) if numeric_id else clean_username
+        entity = await client.get_entity(peer)
         input_peer = await client.get_input_entity(entity)
     except (UsernameInvalidError, UsernameNotOccupiedError):
         logger.warning("Пользователь @%s не найден в Telegram", clean_username)
@@ -328,7 +332,7 @@ async def get_user_gifts(
             # --- определяем анонимность ---
             is_name_hidden = getattr(gift_item, "name_hidden", None)
             # name_hidden == True → анонимный отправитель
-            is_anonymous = is_name_hidden is True
+            is_anonymous = is_name_hidden is True or getattr(gift_item, "from_id", None) is None
 
             # --- определяем отправителя ---
             raw_from = getattr(gift_item, "from_id", None)
@@ -340,7 +344,9 @@ async def get_user_gifts(
                 sender_username = None
                 is_bot = False
             else:
-                sender_id, sender_username, _, is_bot = _resolve_sender(raw_from, users_map, chats_map)
+                sender_id, sender_username, is_anonymous, is_bot = _resolve_sender(raw_from, users_map, chats_map)
+                if is_anonymous and not include_anonymous:
+                    continue
 
             gifts.append(
                 {

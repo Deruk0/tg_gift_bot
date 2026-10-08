@@ -18,6 +18,7 @@ from aiogram.types import Message
 from telethon import TelegramClient
 
 from config import GIFTGRAPH_WEB_URL, GIFTGRAPH_WEB_API_URL, GIFTGRAPH_WEB_SECRET
+from miniapp import graph_keyboard
 from services.graph import build_path_graph, build_tree_graph
 from services.parser import validate_gift_access
 from services.visualizer import cleanup_html, render_graph_to_html
@@ -43,12 +44,13 @@ def _parse_args(text: str) -> Tuple[List[str], Dict]:
     raw = re.sub(r"^/search(?:@\S+)?", "", raw, flags=re.IGNORECASE).strip()
 
     if not raw:
-        return [], {"depth": 2, "mode": "tree", "gifts": "public"}
+        return [], {"depth": 2, "mode": "tree", "gifts": "public", "no_bots": False}
 
     parts = raw.split()
 
     # Первый аргумент — пользователи через запятую
-    usernames_raw = parts[0] if parts else ""
+    option_start = next((i for i, part in enumerate(parts) if part.startswith("--")), len(parts))
+    usernames_raw = "".join(parts[:option_start])
     usernames = [
         u.strip().lstrip("@")
         for u in usernames_raw.split(",")
@@ -63,26 +65,31 @@ def _parse_args(text: str) -> Tuple[List[str], Dict]:
         "no_bots": False,
     }
 
-    remainder = " ".join(parts[1:])
+    i = option_start
+    while i < len(parts):
+        option = parts[i]
+        if option == "--no-bots":
+            params["no_bots"] = True
+            i += 1
+            continue
+        if option not in {"--depth", "--mode", "--gifts"}:
+            raise ValueError(f"Неизвестный параметр: {option}")
+        if i + 1 >= len(parts) or parts[i + 1].startswith("--"):
+            raise ValueError(f"Укажите значение для {option}")
+        value = parts[i + 1]
+        if option == "--depth":
+            if not value.isascii() or not value.isdigit() or not 1 <= int(value) <= 10:
+                raise ValueError("Глубина должна быть целым числом от 1 до 10")
+            params["depth"] = int(value)
+        else:
+            choices = {"--mode": {"tree", "path"}, "--gifts": {"all", "public"}}
+            if value not in choices[option]:
+                raise ValueError(f"Недопустимое значение для {option}: {value}")
+            params[option[2:]] = value
+        i += 2
 
-    # --depth [1-10]
-    m = re.search(r"--depth\s+(10|[1-9])", remainder)
-    if m:
-        params["depth"] = int(m.group(1))
-
-    # --mode [tree|path]
-    m = re.search(r"--mode\s+(tree|path)", remainder)
-    if m:
-        params["mode"] = m.group(1)
-
-    # --gifts [all|public]
-    m = re.search(r"--gifts\s+(all|public)", remainder)
-    if m:
-        params["gifts"] = m.group(1)
-
-    # --no-bots
-    if "--no-bots" in remainder:
-        params["no_bots"] = True
+    if any(not re.fullmatch(r"[A-Za-z0-9_]+", u) for u in usernames):
+        raise ValueError("Укажите username без ссылки и специальных символов")
 
     # Если несколько пользователей — автоматически переключаем на path
     if len(usernames) > 1 and params["mode"] != "path":
@@ -128,7 +135,7 @@ async def _upload_to_web(html_path: str, label: str, node_count: int, edge_count
                     "path_length": path_length,
                 },
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=aiohttp.ClientTimeout(total=45),
             ) as resp:
                 if resp.status in (200, 201):
                     data = await resp.json()
@@ -152,7 +159,11 @@ async def cmd_search(
     Основной обработчик поиска.
     telethon_client передаётся через workflow_data из dp.start_polling().
     """
-    usernames, params = _parse_args(message.text or "")
+    try:
+        usernames, params = _parse_args(message.text or "")
+    except ValueError as exc:
+        await message.answer(f"❌ {escape(str(exc))}\n\nПолная справка: /help", parse_mode="HTML")
+        return
 
     # ── Валидация входных данных ───────────────────────────────────────────────
 
@@ -301,8 +312,6 @@ async def cmd_search(
         caption = "\n".join(caption_parts)
 
         # ── Отправка результата ────────────────────────────────────────────────
-        await processing_msg.delete()
-
         web_url: Optional[str] = None
         if html_path and os.path.exists(html_path):
             paths = graph_data.get("paths", []) if graph_data else []
@@ -325,7 +334,15 @@ async def cmd_search(
         else:
             caption += "\n\n⚠️ <i>Веб-версия временно недоступна.</i>"
 
-        await message.answer(caption, parse_mode="HTML")
+        await message.answer(
+            caption,
+            parse_mode="HTML",
+            reply_markup=graph_keyboard(web_url, message.chat.type == "private") if web_url else None,
+        )
+        try:
+            await processing_msg.delete()
+        except Exception:
+            logger.debug("Не удалось удалить сообщение о прогрессе", exc_info=True)
 
     except Exception as exc:
         logger.error(

@@ -71,9 +71,9 @@ def _pluralize_days(n: int) -> str:
 # ── /subscribe ─────────────────────────────────────────────────────────────────
 
 @router.message(Command("subscribe"))
-async def cmd_subscribe(message: Message) -> None:
+async def cmd_subscribe(message: Message, user_id: int | None = None) -> None:
     """Показать статус подписки и доступные тарифы"""
-    user = await get_or_create_user(message.from_user.id)
+    user = await get_or_create_user(user_id if user_id is not None else message.from_user.id)
 
     # Формируем строку статуса подписки
     sub_status_lines = []
@@ -116,7 +116,7 @@ async def cmd_subscribe(message: Message) -> None:
 async def callback_show_subscription(callback: CallbackQuery) -> None:
     """Открыть страницу подписки по нажатию кнопки"""
     await callback.answer()
-    await cmd_subscribe(callback.message)
+    await cmd_subscribe(callback.message, user_id=callback.from_user.id)
 
 
 # ── Создание инвойсов ──────────────────────────────────────────────────────────
@@ -221,11 +221,11 @@ async def process_successful_payment(message: Message) -> None:
 
     # Рассчитываем новую дату окончания
     if payload == "subscription_monthly":
-        new_until = start_date + timedelta(days=30)
+        new_until = start_date + timedelta(days=min(30, (date.max - start_date).days))
         period_text = "1 месяц"
         stars_spent = SUBSCRIPTION_MONTHLY_STARS
     elif payload == "subscription_yearly":
-        new_until = start_date + timedelta(days=365)
+        new_until = start_date + timedelta(days=min(365, (date.max - start_date).days))
         period_text = "1 год"
         stars_spent = SUBSCRIPTION_YEARLY_STARS
     else:
@@ -302,7 +302,7 @@ async def cmd_promo(message: Message) -> None:
         new_until = date(9999, 12, 31)
         duration_text = "навсегда 🔮"
     else:
-        new_until = start_date + timedelta(days=days)
+        new_until = start_date + timedelta(days=min(days, (date.max - start_date).days))
         duration_text = f"на {_pluralize_days(days)}"
 
     await set_subscription(user_id, new_until)
@@ -405,6 +405,10 @@ async def cmd_admin_grant(message: Message) -> None:
         await message.answer("❌ USER_ID и ДНЕЙ должны быть числами.")
         return
 
+    if target_id <= 0 or days < 0:
+        await message.answer("❌ USER_ID должен быть положительным, а ДНЕЙ — не меньше 0.")
+        return
+
     user = await get_or_create_user(target_id)
     today = date.today()
 
@@ -421,7 +425,7 @@ async def cmd_admin_grant(message: Message) -> None:
         new_until = date(9999, 12, 31)
         duration_text = "навсегда 🔮"
     else:
-        new_until = start_date + timedelta(days=days)
+        new_until = start_date + timedelta(days=min(days, (date.max - start_date).days))
         duration_text = f"на {_pluralize_days(days)}"
 
     await set_subscription(target_id, new_until)

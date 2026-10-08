@@ -16,7 +16,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, TelegramObject
 
 from config import FREE_SEARCHES_LIMIT
-from database.db import get_or_create_user, increment_search_count
+from database.db import get_or_create_user, reserve_free_search
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,18 @@ class LimitsMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         # Пропускаем всё кроме /search
-        if not event.text or not event.text.startswith("/search"):
+        command = (event.text or "").split(maxsplit=1)
+        if not command or command[0].split("@")[0] != "/search":
+            return await handler(event, data)
+
+        # Let the handler explain invalid arguments without spending a search.
+        from handlers.search import _parse_args
+
+        try:
+            usernames, params = _parse_args(event.text)
+        except ValueError:
+            return await handler(event, data)
+        if not usernames or (params["mode"] == "path" and len(usernames) < 2):
             return await handler(event, data)
 
         user_id = event.from_user.id
@@ -63,10 +74,10 @@ class LimitsMiddleware(BaseMiddleware):
         # ── Шаг 2: Проверяем бесплатные поиски ────────────────────────────────
         searches_used: int = user["free_searches_used"]
 
-        if searches_used < FREE_SEARCHES_LIMIT:
-            # Инкрементируем сразу (до обработки — защита от гонки)
-            await increment_search_count(user_id)
-            remaining = FREE_SEARCHES_LIMIT - searches_used - 1
+        reserved_count = await reserve_free_search(user_id, FREE_SEARCHES_LIMIT)
+        if reserved_count is not None:
+            remaining = FREE_SEARCHES_LIMIT - reserved_count
+            user["free_searches_used"] = reserved_count
 
             # Предупреждаем когда лимит на исходе
             if remaining == 0:
@@ -98,7 +109,7 @@ class LimitsMiddleware(BaseMiddleware):
         )
 
         await event.answer(
-            "🚫 Вы использовали все <b>3 бесплатных поиска</b>.\n\n"
+            f"🚫 Вы использовали все <b>{FREE_SEARCHES_LIMIT} бесплатных поиска</b>.\n\n"
             "Оформите подписку для неограниченного доступа к графу связей:",
             parse_mode="HTML",
             reply_markup=keyboard,

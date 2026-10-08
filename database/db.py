@@ -67,6 +67,20 @@ async def increment_search_count(user_id: int) -> None:
         await db.commit()
 
 
+async def reserve_free_search(user_id: int, limit: int) -> Optional[int]:
+    """Atomically reserve a search and return the new count, or None at the limit."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "UPDATE users SET free_searches_used = free_searches_used + 1 "
+            "WHERE user_id = ? AND free_searches_used < ? "
+            "RETURNING free_searches_used",
+            (user_id, limit),
+        ) as cursor:
+            row = await cursor.fetchone()
+        await db.commit()
+        return row[0] if row else None
+
+
 async def set_subscription(user_id: int, until_date: date) -> None:
     """Установить или продлить подписку до указанной даты"""
     async with aiosqlite.connect(DB_PATH) as db:
