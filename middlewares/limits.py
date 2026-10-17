@@ -1,12 +1,7 @@
-"""
-Middleware для проверки лимитов поиска и статуса подписки.
+"""Search access: active subscription, free attempts, then paid balance.
 
-Логика перед каждым /search:
-  1. Активная подписка?  → пропускаем без ограничений
-  2. free_searches_used < 3? → разрешаем + инкрементируем + предупреждаем при 1-2 оставшихся
-  3. free_searches_used >= 3? → блокируем + кнопка подписки
-
-Middleware прозрачен для всех команд кроме /search.
+allow_search is called only when the user confirms graph construction.
+The middleware adapter is retained for compatibility with older callers.
 """
 import logging
 from datetime import date
@@ -16,7 +11,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, TelegramObject
 
 from config import FREE_SEARCHES_LIMIT
-from database.db import get_or_create_user, reserve_free_search
+from database.db import get_or_create_user, reserve_free_search, reserve_paid_search
 
 logger = logging.getLogger(__name__)
 
@@ -53,72 +48,85 @@ class LimitsMiddleware(BaseMiddleware):
         if not usernames or (params["mode"] == "path" and len(usernames) < 2):
             return await handler(event, data)
 
-        user_id = event.from_user.id
-        user = await get_or_create_user(user_id)
-
-        # ── Шаг 1: Проверяем активную подписку ────────────────────────────────
-        if user["subscription_until"]:
-            try:
-                sub_until = date.fromisoformat(user["subscription_until"])
-                if sub_until >= date.today():
-                    # Подписка активна — пропускаем без ограничений
-                    data["user_db"] = user
-                    return await handler(event, data)
-            except ValueError:
-                logger.warning(
-                    "Некорректный формат даты подписки у пользователя %d: %s",
-                    user_id,
-                    user["subscription_until"],
-                )
-
-        # ── Шаг 2: Проверяем бесплатные поиски ────────────────────────────────
-        searches_used: int = user["free_searches_used"]
-
-        reserved_count = await reserve_free_search(user_id, FREE_SEARCHES_LIMIT)
-        if reserved_count is not None:
-            remaining = FREE_SEARCHES_LIMIT - reserved_count
-            user["free_searches_used"] = reserved_count
-
-            # Предупреждаем когда лимит на исходе
-            if remaining == 0:
-                await event.answer(
-                    "⚠️ Это ваш <b>последний</b> бесплатный поиск.\n"
-                    "Оформите подписку командой /subscribe для неограниченного доступа.",
-                    parse_mode="HTML",
-                )
-            elif remaining == 1:
-                await event.answer(
-                    f"⚠️ Осталось бесплатных поисков: <b>{remaining}</b>.\n"
-                    "Команда /subscribe — подробности подписки.",
-                    parse_mode="HTML",
-                )
-
-            data["user_db"] = user
+        if await allow_search(event, event.from_user.id):
             return await handler(event, data)
+        return None
 
-        # ── Шаг 3: Лимит исчерпан — блокируем ────────────────────────────────
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⭐ Оформить подписку",
-                        callback_data="show_subscription",
-                    )
-                ]
+
+async def allow_search(event: Message, user_id: int) -> bool:
+    """Reserve quota only when a configured search is confirmed."""
+    user = await get_or_create_user(user_id)
+
+    # ── Шаг 1: Проверяем активную подписку ────────────────────────────────
+    if user["subscription_until"]:
+        try:
+            sub_until = date.fromisoformat(user["subscription_until"])
+            if sub_until >= date.today():
+                # Подписка активна — пропускаем без ограничений
+                return True
+        except ValueError:
+            logger.warning(
+                "Некорректный формат даты подписки у пользователя %d: %s",
+                user_id,
+                user["subscription_until"],
+            )
+
+    # ── Шаг 2: Проверяем бесплатные поиски ────────────────────────────────
+    searches_used: int = user["free_searches_used"]
+
+    reserved_count = await reserve_free_search(user_id, FREE_SEARCHES_LIMIT)
+    if reserved_count is not None:
+        remaining = FREE_SEARCHES_LIMIT - reserved_count
+        user["free_searches_used"] = reserved_count
+
+        # Предупреждаем когда лимит на исходе
+        if remaining == 0:
+            await event.answer(
+                "⚠️ Это ваш <b>последний</b> бесплатный поиск.\n"
+                "Купить попытки или подписку: /subscribe.",
+                parse_mode="HTML",
+            )
+        elif remaining == 1:
+            await event.answer(
+                f"⚠️ Осталось бесплатных поисков: <b>{remaining}</b>.\n"
+                "Купить попытки или подписку: /subscribe.",
+                parse_mode="HTML",
+            )
+
+        return True
+
+    paid_remaining = await reserve_paid_search(user_id)
+    if paid_remaining is not None:
+        if paid_remaining <= 1:
+            await event.answer(
+                f"🎟 Купленных попыток осталось: <b>{paid_remaining}</b>.\n"
+                "Пополнить баланс: /subscribe.", parse_mode="HTML",
+            )
+        return True
+
+    # ── Шаг 3: Попытки закончились — предлагаем покупку ───────────────────
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎟 Купить попытки или подписку",
+                    callback_data="show_subscription",
+                )
             ]
-        )
+        ]
+    )
 
-        await event.answer(
-            f"🚫 Вы использовали все <b>{FREE_SEARCHES_LIMIT} бесплатных поиска</b>.\n\n"
-            "Оформите подписку для неограниченного доступа к графу связей:",
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
+    await event.answer(
+        "🎟 Попытки закончились.\n\n"
+        "Купи попытки без срока действия или подписку с неограниченным числом поисков:",
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
 
-        logger.info(
-            "Пользователь %d заблокирован лимитом (использовано: %d/%d)",
-            user_id,
-            searches_used,
-            FREE_SEARCHES_LIMIT,
-        )
-        return None  # Не передаём управление обработчику
+    logger.info(
+        "Пользователь %d заблокирован лимитом (использовано: %d/%d)",
+        user_id,
+        searches_used,
+        FREE_SEARCHES_LIMIT,
+    )
+    return False

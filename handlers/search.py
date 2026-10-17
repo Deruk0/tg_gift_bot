@@ -14,11 +14,12 @@ from typing import Dict, List, Optional, Tuple
 
 from aiogram import Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from telethon import TelegramClient
 
 from config import GIFTGRAPH_WEB_URL, GIFTGRAPH_WEB_API_URL, GIFTGRAPH_WEB_SECRET
-from miniapp import graph_keyboard
+from miniapp import result_keyboard
 from services.graph import build_path_graph, build_tree_graph
 from services.parser import validate_gift_access
 from services.visualizer import cleanup_html, render_graph_to_html
@@ -50,10 +51,10 @@ def _parse_args(text: str) -> Tuple[List[str], Dict]:
 
     # Первый аргумент — пользователи через запятую
     option_start = next((i for i, part in enumerate(parts) if part.startswith("--")), len(parts))
-    usernames_raw = "".join(parts[:option_start])
+    usernames_raw = " ".join(parts[:option_start])
     usernames = [
         u.strip().lstrip("@")
-        for u in usernames_raw.split(",")
+        for u in re.split(r"[\s,]+", usernames_raw)
         if u.strip().lstrip("@")
     ]
 
@@ -94,6 +95,9 @@ def _parse_args(text: str) -> Tuple[List[str], Dict]:
     # Если несколько пользователей — автоматически переключаем на path
     if len(usernames) > 1 and params["mode"] != "path":
         params["mode"] = "path"
+
+    if params["mode"] == "path" and len({u.lower() for u in usernames}) != 2:
+        raise ValueError("Для режима path укажите ровно двух разных пользователей")
 
     return usernames, params
 
@@ -153,25 +157,29 @@ async def _upload_to_web(html_path: str, label: str, node_count: int, edge_count
 @router.message(Command("search"))
 async def cmd_search(
     message: Message,
-    telethon_client: TelegramClient,
+    state: FSMContext,
 ) -> None:
-    """
-    Основной обработчик поиска.
-    telethon_client передаётся через workflow_data из dp.start_polling().
-    """
+    """Open button settings, optionally prefilled with command arguments."""
     try:
         usernames, params = _parse_args(message.text or "")
     except ValueError as exc:
         await message.answer(f"❌ {escape(str(exc))}\n\nПолная справка: /help", parse_mode="HTML")
         return
 
+    from handlers.settings import open_settings
+    await open_settings(message, state, usernames, params)
+
+
+async def execute_search(message: Message, telethon_client: TelegramClient,
+                         usernames: List[str], params: Dict, user_id: int) -> bool | None:
+    """Build a graph after the user confirms the settings."""
     # ── Валидация входных данных ───────────────────────────────────────────────
 
     if not usernames:
         await message.answer(
             "❌ Укажите пользователя:\n\n"
             "• <code>/search @username</code>\n"
-            "• <code>/search @user1,@user2 --mode path</code>\n\n"
+            "• <code>/search @user1 @user2</code>\n\n"
             "Полная справка: /help",
             parse_mode="HTML",
         )
@@ -179,8 +187,8 @@ async def cmd_search(
 
     if params["mode"] == "path" and len(usernames) < 2:
         await message.answer(
-            "❌ Для режима <b>path</b> нужно минимум 2 пользователя:\n"
-            "<code>/search @user1,@user2 --mode path</code>",
+            "❌ Для цепи нужны два разных пользователя:\n"
+            "<code>/search @user1 @user2</code>",
             parse_mode="HTML",
         )
         return
@@ -193,7 +201,11 @@ async def cmd_search(
             "Обратитесь к администратору.",
             parse_mode="HTML",
         )
-        logger.error("Telethon клиент не подключён при попытке поиска от %d", message.from_user.id)
+        logger.error("Telethon клиент не подключён при попытке поиска от %d", user_id)
+        return
+
+    from middlewares.limits import allow_search
+    if not await allow_search(message, user_id):
         return
 
     # ── Сообщение о начале обработки ──────────────────────────────────────────
@@ -264,7 +276,7 @@ async def cmd_search(
                 "• Профиль закрыт или недоступен\n"
                 "• У пользователя нет подарков с видимыми отправителями\n"
                 "• Пользователь не найден в Telegram\n\n"
-                "Попробуйте <code>--gifts all</code> для включения анонимных подарков.",
+                "Попробуй выбрать «Все» на шаге «Подарки» при следующем построении.",
                 parse_mode="HTML",
             )
             return
@@ -292,6 +304,9 @@ async def cmd_search(
 
         # Добавляем найденный путь если есть
         if params["mode"] == "path":
+            caption_parts.append("🍃 Цепочка + листья в один шаг (до 8 на звено).")
+            if graph_data.get("hidden_leaves"):
+                caption_parts.append(f"Для компактности скрыто листьев: {graph_data['hidden_leaves']}.")
             paths = graph_data.get("paths", [])
             if paths:
                 # Фильтруем анонимные узлы из отображения пути
@@ -324,30 +339,24 @@ async def cmd_search(
                 path_len,
             )
 
-        # Формируем caption с ссылкой на сайт
-        if web_url:
-            caption += (
-                f"\n\n🌐 <b>Открыть граф:</b>\n"
-                f"<a href=\"{web_url}\">{web_url}</a>\n"
-                f"<i>Граф сохранён и доступен постоянно.</i>"
-            )
-        else:
+        if not web_url:
             caption += "\n\n⚠️ <i>Веб-версия временно недоступна.</i>"
 
         await message.answer(
             caption,
             parse_mode="HTML",
-            reply_markup=graph_keyboard(web_url, message.chat.type == "private") if web_url else None,
+            reply_markup=result_keyboard(web_url, message.chat.type == "private", user_id),
         )
         try:
             await processing_msg.delete()
         except Exception:
             logger.debug("Не удалось удалить сообщение о прогрессе", exc_info=True)
+        return True
 
     except Exception as exc:
         logger.error(
             "Критическая ошибка в cmd_search для пользователя %d: %s",
-            message.from_user.id,
+            user_id,
             exc,
             exc_info=True,
         )

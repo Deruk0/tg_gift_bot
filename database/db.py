@@ -20,6 +20,10 @@ async def init_db() -> None:
     """Инициализация базы данных и создание таблиц (идемпотентно)"""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(CREATE_TABLES_SQL)
+        async with db.execute("PRAGMA table_info(users)") as cursor:
+            columns = {row[1] for row in await cursor.fetchall()}
+        if "paid_searches" not in columns:
+            await db.execute("ALTER TABLE users ADD COLUMN paid_searches INTEGER NOT NULL DEFAULT 0 CHECK (paid_searches >= 0)")
         await db.commit()
     logger.info("База данных инициализирована: %s", DB_PATH)
 
@@ -79,6 +83,45 @@ async def reserve_free_search(user_id: int, limit: int) -> Optional[int]:
             row = await cursor.fetchone()
         await db.commit()
         return row[0] if row else None
+
+
+async def reserve_paid_search(user_id: int) -> Optional[int]:
+    """Atomically spend one paid attempt; return balance or None if empty."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "UPDATE users SET paid_searches = paid_searches - 1 "
+            "WHERE user_id = ? AND paid_searches > 0 RETURNING paid_searches",
+            (user_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        await db.commit()
+        return row[0] if row else None
+
+
+async def credit_search_payment(user_id: int, charge_id: str, attempts: int,
+                                stars: int, payload: str) -> Optional[int]:
+    """Credit a payment once, with the receipt and balance in one transaction."""
+    if not charge_id or attempts <= 0 or stars <= 0:
+        raise ValueError("Invalid search payment")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        await db.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+        async with db.execute(
+            "INSERT INTO search_payments (charge_id, user_id, attempts, stars, payload) "
+            "VALUES (?, ?, ?, ?, ?) ON CONFLICT(charge_id) DO NOTHING RETURNING charge_id",
+            (charge_id, user_id, attempts, stars, payload),
+        ) as cursor:
+            inserted = await cursor.fetchone()
+        if inserted is None:
+            await db.rollback()
+            return None
+        async with db.execute(
+            "UPDATE users SET paid_searches = paid_searches + ? WHERE user_id = ? RETURNING paid_searches",
+            (attempts, user_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        await db.commit()
+        return row[0]
 
 
 async def set_subscription(user_id: int, until_date: date) -> None:

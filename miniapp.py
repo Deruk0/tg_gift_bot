@@ -15,3 +15,11 @@ def graph_keyboard(url: str, private_chat: bool, text: str = "🕸 Открыт�
     else:
         button = InlineKeyboardButton(text="🌐 Открыть сайт", url=url)
     return InlineKeyboardMarkup(inline_keyboard=[[button]])
+
+
+def result_keyboard(url: str | None, private_chat: bool, user_id: int) -> InlineKeyboardMarkup:
+    rows = graph_keyboard(url, private_chat).inline_keyboard if url else []
+    return InlineKeyboardMarkup(inline_keyboard=[
+        *rows,
+        [InlineKeyboardButton(text="🕸 Построить ещё", callback_data=f"new_graph:{user_id}")],
+    ])

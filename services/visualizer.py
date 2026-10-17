@@ -223,6 +223,7 @@ def _compute_visual_data(graph_data: Dict[str, Any]) -> Tuple[Dict[str, Dict[str
             "kind": kind,
             "label": label,
             "anonymous": anonymous,
+            "gift_count": node_data.get("gift_count", 1) if anonymous else None,
             "is_bot": is_bot,
             "degree": degree,
             "level": level,
@@ -236,7 +237,7 @@ def _compute_visual_data(graph_data: Dict[str, Any]) -> Tuple[Dict[str, Dict[str
                 if kind == "path"
                 else f"Бот · связей: {degree}"
                 if kind == "bot"
-                else f"Анонимный отправитель · связей: {degree}"
+                else f"Анонимные подарки: {node_data.get('gift_count', 1)} · отправители неизвестны"
                 if kind == "anonymous"
                 else f"{node_data.get('title', label)} · связей: {degree}"
             ),
@@ -350,7 +351,7 @@ def _build_pyvis_network(
 
         net.add_node(
             node_id,
-            label=meta["label"] if kind != "anonymous" else "?",
+            label=meta["label"],
             color=node_color,
             size=meta["size"],
             font={"color": font_color, "size": 14 if kind not in ("anonymous", "bot") else 10, "bold": bold},

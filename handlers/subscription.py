@@ -25,10 +25,12 @@ from aiogram.types import (
 from config import (
     ADMIN_USER_ID,
     PROMO_CODES,
+    FREE_SEARCHES_LIMIT,
+    SEARCH_PACKS,
     SUBSCRIPTION_MONTHLY_STARS,
     SUBSCRIPTION_YEARLY_STARS,
 )
-from database.db import get_or_create_user, set_promo_used, set_subscription
+from database.db import credit_search_payment, get_or_create_user, set_promo_used, set_subscription
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -40,20 +42,42 @@ def _subscription_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура с кнопками выбора тарифа"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text=f"🎟 {_attempts_label(count)} — {price} ⭐",
+                                  callback_data=f"buy_searches_{count}")]
+            for count, price in SEARCH_PACKS.items()
+        ] + [
             [
                 InlineKeyboardButton(
-                    text=f"📅 Месяц — {SUBSCRIPTION_MONTHLY_STARS} ⭐",
+                    text=f"📅 Подписка на месяц — {SUBSCRIPTION_MONTHLY_STARS} ⭐",
                     callback_data="subscribe_monthly",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f"📆 Год — {SUBSCRIPTION_YEARLY_STARS} ⭐ (экономия 58%)",
+                    text=f"📆 Подписка на год — {SUBSCRIPTION_YEARLY_STARS} ⭐",
                     callback_data="subscribe_yearly",
                 )
             ],
         ]
     )
+
+
+def _attempts_label(count: int) -> str:
+    ending = 'попыток' if 11 <= count % 100 <= 14 else (
+        'попытка' if count % 10 == 1 else 'попытки' if 2 <= count % 10 <= 4 else 'попыток')
+    return f'{count} {ending}'
+
+
+def _payment_offer(payload: str) -> tuple[int, int] | None:
+    """Return (price, attempts), where zero attempts denotes a subscription."""
+    subscriptions = {'subscription_monthly': SUBSCRIPTION_MONTHLY_STARS,
+                     'subscription_yearly': SUBSCRIPTION_YEARLY_STARS}
+    if payload in subscriptions:
+        return subscriptions[payload], 0
+    for count, price in SEARCH_PACKS.items():
+        if payload == f'searches_{count}':
+            return price, count
+    return None
 
 
 def _pluralize_days(n: int) -> str:
@@ -70,7 +94,7 @@ def _pluralize_days(n: int) -> str:
 
 # ── /subscribe ─────────────────────────────────────────────────────────────────
 
-@router.message(Command("subscribe"))
+@router.message(Command("subscribe", "buy"))
 async def cmd_subscribe(message: Message, user_id: int | None = None) -> None:
     """Показать статус подписки и доступные тарифы"""
     user = await get_or_create_user(user_id if user_id is not None else message.from_user.id)
@@ -91,20 +115,25 @@ async def cmd_subscribe(message: Message, user_id: int | None = None) -> None:
         except ValueError:
             pass
 
-    if not sub_status_lines:
-        searches_left = max(0, 3 - user["free_searches_used"])
-        sub_status_lines.append(f"🆓 Бесплатных поисков осталось: <b>{searches_left}</b>\n")
+    searches_left = max(0, FREE_SEARCHES_LIMIT - user["free_searches_used"])
+    sub_status_lines.append(f"🆓 Бесплатных попыток: <b>{searches_left}</b>\n")
+    sub_status_lines.append(f"🎟 Купленных попыток: <b>{user.get('paid_searches', 0)}</b>\n")
 
     status_text = "".join(sub_status_lines)
 
     await message.answer(
-        "⭐ <b>Подписка GiftGraph</b>\n\n"
+        "🎟 <b>Попытки и подписка GiftGraph</b>\n\n"
         f"{status_text}"
         "━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "💰 <b>Тарифы (оплата Telegram Stars):</b>\n"
+        "🎟 <b>Попытки без срока действия:</b>\n"
+        + "".join(f"• {_attempts_label(count)} — <b>{price} ⭐</b>\n" for count, price in SEARCH_PACKS.items()) +
+        "\nОдна попытка — один запуск построения графа.\n"
+        "Сначала расходуются бесплатные попытки, затем купленные.\n"
+        "При активной подписке попытки сохраняются.\n\n"
+        "⭐ <b>Подписка — неограниченные поиски:</b>\n"
         f"• Месяц: <b>{SUBSCRIPTION_MONTHLY_STARS} ⭐</b>\n"
-        f"• Год: <b>{SUBSCRIPTION_YEARLY_STARS} ⭐</b> — экономия 58%\n\n"
-        "Выберите тариф:",
+        f"• Год: <b>{SUBSCRIPTION_YEARLY_STARS} ⭐</b>\n\n"
+        "Выбери вариант оплаты Telegram Stars:",
         parse_mode="HTML",
         reply_markup=_subscription_keyboard(),
     )
@@ -120,6 +149,22 @@ async def callback_show_subscription(callback: CallbackQuery) -> None:
 
 
 # ── Создание инвойсов ──────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("buy_searches_"))
+async def callback_buy_searches(callback: CallbackQuery) -> None:
+    payload = callback.data.replace('buy_searches_', 'searches_', 1)
+    offer = _payment_offer(payload)
+    if offer is None or offer[1] == 0:
+        await callback.answer('Этот пакет недоступен. Открой /subscribe.', show_alert=True)
+        return
+    price, count = offer
+    await callback.answer()
+    await callback.message.answer_invoice(
+        title=f'GiftGraph — {_attempts_label(count)}',
+        description='Попытки построения графа без срока действия. Одна попытка — один запуск. При активной подписке попытки сохраняются.',
+        payload=payload, currency='XTR',
+        prices=[LabeledPrice(label=_attempts_label(count), amount=price)],
+    )
 
 @router.callback_query(F.data == "subscribe_monthly")
 async def callback_subscribe_monthly(callback: CallbackQuery) -> None:
@@ -153,7 +198,7 @@ async def callback_subscribe_yearly(callback: CallbackQuery) -> None:
         title="GiftGraph — Подписка 1 год",
         description=(
             "Неограниченный доступ к графу социальных связей на 365 дней. "
-            "Экономия 58% по сравнению с месячной подпиской."
+            "Оплата Telegram Stars."
         ),
         payload="subscription_yearly",
         currency="XTR",              # Telegram Stars
@@ -177,6 +222,10 @@ async def process_pre_checkout(pre_checkout: PreCheckoutQuery) -> None:
     Подтверждение инвойса перед оплатой.
     Telegram требует ответа в течение 10 секунд.
     """
+    offer = _payment_offer(pre_checkout.invoice_payload)
+    if offer is None or pre_checkout.currency != 'XTR' or pre_checkout.total_amount != offer[0]:
+        await pre_checkout.answer(ok=False, error_message='Счёт недействителен. Открой /subscribe и выбери покупку заново.')
+        return
     await pre_checkout.answer(ok=True)
     logger.info(
         "Pre-checkout подтверждён: user=%d payload=%s",
@@ -196,6 +245,27 @@ async def process_successful_payment(message: Message) -> None:
     payment = message.successful_payment
     payload = payment.invoice_payload
     user_id = message.from_user.id
+
+    offer = _payment_offer(payload)
+    if offer is None or payment.currency != 'XTR' or payment.total_amount != offer[0]:
+        logger.error('Недопустимый платёж от пользователя %d: %s', user_id, payload)
+        await message.answer('❌ Не удалось обработать платёж. Обратись в поддержку: /paysupport.')
+        return
+    stars, attempts = offer
+    if attempts:
+        charge_id = payment.telegram_payment_charge_id
+        balance = await credit_search_payment(user_id, charge_id, attempts, stars, payload)
+        if balance is None:
+            await message.answer('✅ Этот платёж уже обработан. Баланс: /subscribe.')
+            return
+        await message.answer(
+            f'🎉 Оплата прошла успешно!\n\n'
+            f'🎟 Начислено: <b>{_attempts_label(attempts)}</b>\n'
+            f'Купленных попыток на балансе: <b>{balance}</b>\n'
+            'Попытки не имеют срока действия.\n\n'
+            'Построить граф: /start', parse_mode='HTML',
+        )
+        return
 
     logger.info(
         "Успешный платёж: user=%d payload=%s amount=%d %s",
@@ -242,6 +312,15 @@ async def process_successful_payment(message: Message) -> None:
         f"📅 Действует до: <b>{new_until.strftime('%d.%m.%Y')}</b>\n\n"
         "Теперь у вас неограниченный доступ к GiftGraph! 🕸",
         parse_mode="HTML",
+    )
+
+
+@router.message(Command('paysupport'))
+async def cmd_paysupport(message: Message) -> None:
+    await message.answer(
+        'Нужна помощь с оплатой? Напиши администратору и приложи квитанцию Telegram Stars.\n'
+        f'<a href="tg://user?id={ADMIN_USER_ID}">Связаться с администратором</a>',
+        parse_mode='HTML',
     )
 
 

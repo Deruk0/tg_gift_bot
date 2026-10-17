@@ -17,14 +17,14 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import SimpleEventIsolation
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
 import config
 from miniapp import miniapp_available
 from database.db import init_db
-from handlers import search, start, subscription
-from middlewares.limits import LimitsMiddleware
+from handlers import search, settings, start, subscription
 from services.parser import validate_gift_access
 
 
@@ -54,7 +54,7 @@ def _setup_logging() -> None:
 
 
 logger = logging.getLogger(__name__)
-BUILD_TAG = "v2026-05-29-tree-ui"
+BUILD_TAG = "v2026-10-10-anonymous-groups"
 
 
 def _proxy_log_label(proxy_url: str) -> str:
@@ -170,7 +170,7 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         session=bot_session,
     )
-    dp = Dispatcher()
+    dp = Dispatcher(events_isolation=SimpleEventIsolation())
 
     # ── Регистрация команд (меню при вводе / в чате Telegram) ─────────────────
     from aiogram.types import BotCommand, BotCommandScopeDefault, MenuButtonWebApp, WebAppInfo
@@ -178,8 +178,9 @@ async def main() -> None:
     commands = [
         BotCommand(command="start", description="👋 Начать работу с ботом"),
         BotCommand(command="app", description="🕸 Открыть мини-приложение GiftGraph"),
-        BotCommand(command="search", description="🕸 Построить граф связей (tree/path)"),
-        BotCommand(command="subscribe", description="⭐ Купить/проверить подписку"),
+        BotCommand(command="search", description="🕸 Настроить и построить граф"),
+        BotCommand(command="subscribe", description="🎟 Купить попытки или подписку"),
+        BotCommand(command="paysupport", description="Помощь с оплатой"),
         BotCommand(command="promo", description="🎁 Активировать промокод"),
         BotCommand(command="help", description="📖 Подробная справка по командам"),
         BotCommand(command="admin", description="⚙️ Админ-панель (только для админа)"),
@@ -191,14 +192,13 @@ async def main() -> None:
         )
     logger.info("Команды бота зарегистрированы в BotFather")
 
-    # ── Регистрация middleware ─────────────────────────────────────────────────
-    # LimitsMiddleware применяется ТОЛЬКО к сообщениям (Message events)
-    dp.message.middleware(LimitsMiddleware())
+    # Search quota is reserved by execute_search after button confirmation.
 
     # ── Регистрация роутеров ───────────────────────────────────────────────────
     dp.include_router(start.router)
     dp.include_router(search.router)
     dp.include_router(subscription.router)
+    dp.include_router(settings.router)
 
     # ── Запуск polling ─────────────────────────────────────────────────────────
     logger.info("Бот запущен. Ожидаем сообщений...")

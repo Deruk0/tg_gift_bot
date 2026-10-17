@@ -10,7 +10,7 @@
 """
 import asyncio
 import logging
-from collections import deque
+from collections import Counter, deque
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from telethon import TelegramClient
@@ -25,6 +25,7 @@ NodeData = Dict[str, Any]
 
 # Тип данных полного графа
 GraphData = Dict[str, Any]
+PATH_LEAVES_PER_NODE = 8
 
 
 # ── Вспомогательные функции ────────────────────────────────────────────────────
@@ -69,6 +70,8 @@ async def build_tree_graph(
     depth: int = 2,
     gifts_mode: str = "public",
     no_bots: bool = False,
+    *,
+    _gift_cache: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> GraphData:
     """
     BFS-обход профилей начиная со start_username.
@@ -122,17 +125,31 @@ async def build_tree_graph(
         logger.debug("BFS: обрабатываем @%s (глубина %d)", current_user, current_depth)
 
         # Получаем подарки текущего пользователя
-        gifts = await get_user_gifts(client, current_user, include_anonymous=include_anon)
+        if _gift_cache is not None and current_user in _gift_cache:
+            gifts = _gift_cache[current_user]
+        else:
+            gifts = await get_user_gifts(client, current_user, include_anonymous=include_anon)
+            if _gift_cache is not None:
+                _gift_cache[current_user] = gifts
 
+        anonymous_count = sum(1 for gift in gifts if gift["anonymous"])
         for gift in gifts:
             if len(graph["nodes"]) >= MAX_NODES_PER_GRAPH:
                 break
 
             if gift["anonymous"]:
-                # Анонимный отправитель — создаём узел-заглушку
-                anon_id = f"anon_{clean_start}_{current_user}_{len(graph['nodes'])}"
-                _add_node(graph, anon_id, "?", anonymous=True)
-                _add_edge(graph, anon_id, current_user)
+                if not include_anon:
+                    continue
+                # One anonymous group per recipient; never imply a shared sender.
+                anon_id = f"anon_{current_user}:gifts"
+                if anon_id in graph["nodes"]:
+                    continue
+                label = f"? ×{anonymous_count}" if anonymous_count > 1 else "?"
+                _add_node(graph, anon_id, label, anonymous=True)
+                graph["nodes"][anon_id]["gift_count"] = anonymous_count
+                # Preserve gift counts used by edge widths, tooltips and statistics.
+                for _ in range(anonymous_count):
+                    _add_edge(graph, anon_id, current_user)
             else:
                 sender = gift["sender_username"]
                 if not sender:
@@ -174,12 +191,12 @@ async def build_path_graph(
     no_bots: bool = False,
 ) -> GraphData:
     """
-    Строит объединённый граф BFS от каждого пользователя,
-    затем находит кратчайший путь между первыми двумя.
+    Ищет кратчайший путь между двумя пользователями в объединённом BFS.
+    Возвращает только цепочку и ограниченное число листьев в один шаг от неё.
 
     Args:
         client:    Активный Telethon клиент
-        usernames: Список пользователей (минимум 2)
+        usernames: Ровно два разных пользователя
         depth:     Глубина BFS от каждого узла
         gifts_mode: "public" или "all"
 
@@ -187,10 +204,8 @@ async def build_path_graph(
         GraphData с заполненным полем "paths"
     """
     clean_users = list(dict.fromkeys(u.lstrip("@").strip().lower() for u in usernames))
-    if not clean_users:
-        return _make_graph()
-    if len(clean_users) > MAX_NODES_PER_GRAPH:
-        raise ValueError("Количество стартовых пользователей превышает лимит узлов")
+    if len(clean_users) != 2:
+        raise ValueError("Для режима path укажите ровно двух разных пользователей")
 
     # Объединённый граф
     combined = _make_graph()
@@ -202,9 +217,11 @@ async def build_path_graph(
 
     # Список смежности для поиска пути (двунаправленный)
     adjacency: Dict[str, Set[str]] = {}
+    gift_cache: Dict[str, List[Dict[str, Any]]] = {}
+    edge_counts: Counter = Counter()
 
     for start_user in clean_users:
-        partial = await build_tree_graph(client, start_user, depth, gifts_mode, no_bots=no_bots)
+        partial = await build_tree_graph(client, start_user, depth, gifts_mode, no_bots=no_bots, _gift_cache=gift_cache)
 
         # Объединяем узлы
         for node_id, node_data in partial["nodes"].items():
@@ -215,10 +232,15 @@ async def build_path_graph(
         for src, dst, label in partial["edges"]:
             if src not in combined["nodes"] or dst not in combined["nodes"]:
                 continue
-            combined["edges"].append((src, dst, label))
             # Граф рассматриваем как ненаправленный для поиска пути
             adjacency.setdefault(src, set()).add(dst)
             adjacency.setdefault(dst, set()).add(src)
+        # The same recipient can be explored from both roots. Preserve repeated
+        # gifts, but do not count the same cached batch twice.
+        edge_counts |= Counter(edge for edge in partial["edges"]
+                               if edge[0] in combined["nodes"] and edge[1] in combined["nodes"])
+
+    combined["edges"] = list(edge_counts.elements())
 
     # Ищем кратчайший путь между первыми двумя пользователями
     if len(clean_users) >= 2:
@@ -239,12 +261,63 @@ async def build_path_graph(
                 depth,
             )
 
+    if combined["paths"]:
+        # Boundary nodes of the search may not have been fetched. Read their
+        # immediate senders once, without exploring the senders' profiles.
+        for user in combined["paths"]:
+            partial = await build_tree_graph(client, user, 1, gifts_mode,
+                                            no_bots=no_bots, _gift_cache=gift_cache)
+            combined["nodes"].update(partial["nodes"])
+            edge_counts |= Counter(partial["edges"])
+        combined["edges"] = list(edge_counts.elements())
+    combined = _compact_path_graph(combined)
+
     logger.info(
         "Граф (path) построен: %d узлов, %d рёбер",
         len(combined["nodes"]),
         len(combined["edges"]),
     )
     return combined
+
+
+def _compact_path_graph(graph: GraphData) -> GraphData:
+    """Keep a spine and real leaves; discard explored trees and cross-links."""
+    result = _make_graph()
+    result["start"] = graph["start"]
+    result["targets"] = graph["targets"]
+    result["paths"] = list(graph["paths"])
+    path = result["paths"]
+    if not path:
+        result["nodes"] = {user: graph["nodes"][user]
+                           for user in [graph["start"], *graph["targets"]]}
+        return result
+
+    spine = set(path)
+    pairs = {frozenset((a, b)) for a, b in zip(path, path[1:])}
+    result["nodes"] = {user: graph["nodes"][user] for user in path}
+    neighbors: Dict[str, Set[str]] = {user: set() for user in path}
+    for src, dst, _ in graph["edges"]:
+        if src in spine and dst not in spine:
+            neighbors[src].add(dst)
+        elif dst in spine and src not in spine:
+            neighbors[dst].add(src)
+
+    hidden = set()
+    for user in path:
+        added = 0
+        for neighbor in sorted(neighbors[user]):
+            if neighbor in result["nodes"]:
+                continue  # A shared neighbor must remain a leaf, not a second route.
+            if added >= PATH_LEAVES_PER_NODE or len(result["nodes"]) >= MAX_NODES_PER_GRAPH:
+                hidden.add(neighbor)
+                continue
+            result["nodes"][neighbor] = graph["nodes"][neighbor]
+            pairs.add(frozenset((user, neighbor)))
+            added += 1
+    result["edges"] = [(src, dst, label) for src, dst, label in graph["edges"]
+                       if src != dst and frozenset((src, dst)) in pairs]
+    result["hidden_leaves"] = len(hidden - set(result["nodes"]))
+    return result
 
 
 # ── BFS поиск кратчайшего пути ─────────────────────────────────────────────────
@@ -279,7 +352,7 @@ def _bfs_shortest_path(
         path = queue.popleft()
         current = path[-1]
 
-        for neighbor in adjacency.get(current, set()):
+        for neighbor in sorted(adjacency.get(current, set())):
             if neighbor == end:
                 return path + [neighbor]
 

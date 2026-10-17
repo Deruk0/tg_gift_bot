@@ -31,6 +31,9 @@ except json.JSONDecodeError:
 SUBSCRIPTION_MONTHLY_STARS: int = 25
 SUBSCRIPTION_YEARLY_STARS: int = 200
 
+# Купленные попытки не имеют срока действия: количество → цена в Stars.
+SEARCH_PACKS: dict[int, int] = {1: 3, 5: 12, 10: 20}
+
 # ── Бесплатный лимит поисков (навсегда) ───────────────────────────────────────
 FREE_SEARCHES_LIMIT: int = 3
 
